@@ -33,6 +33,7 @@ public class WildfireRiskInferenceServiceTest {
         testFuelMoisturePhysics();
         testDataSourceStatusLabeling();
         testJsonSerializationFormat();
+        testApiParameterParsingAndJsonRobustness();
 
         System.out.println("All WildfireRiskInferenceServiceTest tests passed successfully!");
     }
@@ -211,6 +212,50 @@ public class WildfireRiskInferenceServiceTest {
         assertTrue(predJson.contains("\"riskPct\":"), "Pred JSON riskPct");
         assertTrue(predJson.contains("\"rawIndex\":"), "Pred JSON rawIndex");
         assertTrue(predJson.contains("\"fuelMoisturePct\":"), "Pred JSON fuelMoisturePct");
+
+        System.out.println("PASSED");
+    }
+
+    public void testApiParameterParsingAndJsonRobustness() {
+        System.out.print("  - testApiParameterParsingAndJsonRobustness: ");
+
+        // 1. Query param parsing
+        String query = "tempF=95.5&humidityPct=18&windMph=20&drySpellDays=14.0";
+        java.util.Map<String, String> params = ApiServer.parseQueryParams(query);
+        assertEquals("95.5", params.get("tempF"), "Parsed tempF");
+        assertEquals("18", params.get("humidityPct"), "Parsed humidityPct");
+        assertEquals("20", params.get("windMph"), "Parsed windMph");
+        assertEquals("14.0", params.get("drySpellDays"), "Parsed float drySpellDays");
+
+        WeatherFeatures featFromQuery = ApiServer.parseWeatherFeaturesFromParams(params);
+        assertEquals(95.5, featFromQuery.getTempF(), 0.01, "tempF preserved");
+        assertEquals(14, featFromQuery.getDrySpellDays(), "float drySpellDays rounded to int");
+
+        // 2. Metric query params
+        java.util.Map<String, String> metricParams = ApiServer.parseQueryParams("tempC=35&humidityPct=15&windKmh=40");
+        WeatherFeatures featMetric = ApiServer.parseWeatherFeaturesFromParams(metricParams);
+        assertEquals(95, featMetric.getTempFRounded(), "Metric 35C to 95F");
+
+        // 3. JSON body with colons in ISO timestamp and float drySpellDays
+        String jsonBody = "{\"tempF\": 85, \"humidityPct\": 20, \"windMph\": 15, \"drySpellDays\": 5.0, \"observationTime\": \"2026-09-30T10:00:00Z\"}";
+        WeatherFeatures featFromJson = ApiServer.parseWeatherFeaturesFromJson(jsonBody);
+        assertEquals(85.0, featFromJson.getTempF(), 0.01, "JSON tempF");
+        assertEquals(20.0, featFromJson.getHumidityPct(), 0.01, "JSON humidityPct");
+        assertEquals(15.0, featFromJson.getWindMph(), 0.01, "JSON windMph");
+        assertEquals(5, featFromJson.getDrySpellDays(), "JSON float drySpellDays");
+        assertEquals("2026-09-30T10:00:00Z", featFromJson.getObservationTime(), "JSON timestamp with colons preserved");
+
+        // 4. Invalid JSON envelope (e.g. array or bare string)
+        assertThrows(() -> ApiServer.parseWeatherFeaturesFromJson("[1, 2, 3]"), "JSON array rejected");
+        assertThrows(() -> ApiServer.parseWeatherFeaturesFromJson(""), "Empty JSON rejected");
+        assertThrows(() -> ApiServer.parseWeatherFeaturesFromJson("not_json"), "Non-JSON string rejected");
+
+        // 5. Invalid numeric values
+        assertThrows(() -> ApiServer.parseWeatherFeaturesFromParams(java.util.Map.of("tempF", "abc", "humidityPct", "20", "windMph", "10")), "Non-numeric tempF");
+        assertThrows(() -> ApiServer.parseWeatherFeaturesFromParams(java.util.Map.of("tempF", "80", "humidityPct", "xyz", "windMph", "10")), "Non-numeric humidity");
+
+        // 6. Out of range via JSON
+        assertThrows(() -> ApiServer.parseWeatherFeaturesFromJson("{\"tempF\": 160, \"humidityPct\": 20, \"windMph\": 10}"), "Out-of-range temperature rejected");
 
         System.out.println("PASSED");
     }

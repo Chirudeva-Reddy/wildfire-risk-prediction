@@ -152,7 +152,7 @@ public class FosbergFireWeatherIndexModel implements WildfireRiskModel {
             sb.append("Low fire activity: ");
         }
 
-        sb.append(String.format("Fuel moisture %.1f%% with %d°F heat, %d%% humidity, and %d mph wind over %d dry days.",
+        sb.append(String.format(java.util.Locale.US, "Fuel moisture %.1f%% with %d°F heat, %d%% humidity, and %d mph wind over %d dry days.",
                 fuelMoisture,
                 weather.getTempFRounded(),
                 weather.getHumidityPctRounded(),

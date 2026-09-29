@@ -135,7 +135,7 @@ public class ApiServer {
         return sb.toString();
     }
 
-    private static Map<String, String> parseQueryParams(String rawQuery) {
+    public static Map<String, String> parseQueryParams(String rawQuery) {
         Map<String, String> map = new HashMap<>();
         if (rawQuery == null || rawQuery.trim().isEmpty()) {
             return map;
@@ -152,7 +152,30 @@ public class ApiServer {
         return map;
     }
 
-    private static WeatherFeatures parseWeatherFeaturesFromParams(Map<String, String> params) {
+    private static double parseDoubleParam(Map<String, String> params, String key) {
+        String val = params.get(key);
+        if (val == null || val.trim().isEmpty()) {
+            throw new IllegalArgumentException("Missing value for parameter: " + key);
+        }
+        try {
+            return Double.parseDouble(val.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid numeric value for parameter '" + key + "': " + val);
+        }
+    }
+
+    private static int parseDrySpellDays(Map<String, String> params) {
+        if (!params.containsKey("drySpellDays")) return 0;
+        String val = params.get("drySpellDays");
+        if (val == null || val.trim().isEmpty()) return 0;
+        try {
+            return (int) Math.round(Double.parseDouble(val.trim()));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid numeric value for drySpellDays: " + val);
+        }
+    }
+
+    public static WeatherFeatures parseWeatherFeaturesFromParams(Map<String, String> params) {
         if (!params.containsKey("tempF") && !params.containsKey("tempC")) {
             throw new IllegalArgumentException("Missing required temperature parameter (tempF or tempC)");
         }
@@ -163,30 +186,43 @@ public class ApiServer {
             throw new IllegalArgumentException("Missing required wind parameter (windMph or windKmh)");
         }
 
-        double humidityPct = Double.parseDouble(params.get("humidityPct"));
-        int drySpellDays = params.containsKey("drySpellDays") ? Integer.parseInt(params.get("drySpellDays")) : 0;
+        double humidityPct = parseDoubleParam(params, "humidityPct");
+        int drySpellDays = parseDrySpellDays(params);
+        String observationTime = params.get("observationTime");
 
         if (params.containsKey("tempC") || params.containsKey("windKmh")) {
-            double tempC = params.containsKey("tempC") ? Double.parseDouble(params.get("tempC")) : ((Double.parseDouble(params.get("tempF")) - 32.0) * 5.0 / 9.0);
-            double windKmh = params.containsKey("windKmh") ? Double.parseDouble(params.get("windKmh")) : (Double.parseDouble(params.get("windMph")) / 0.621371192);
-            return WeatherFeatures.fromMetric(tempC, humidityPct, windKmh, drySpellDays);
+            double tempC = params.containsKey("tempC")
+                    ? parseDoubleParam(params, "tempC")
+                    : ((parseDoubleParam(params, "tempF") - 32.0) * 5.0 / 9.0);
+            double windKmh = params.containsKey("windKmh")
+                    ? parseDoubleParam(params, "windKmh")
+                    : (parseDoubleParam(params, "windMph") / 0.621371192);
+            return WeatherFeatures.fromMetric(tempC, humidityPct, windKmh, drySpellDays, observationTime);
         } else {
-            double tempF = Double.parseDouble(params.get("tempF"));
-            double windMph = Double.parseDouble(params.get("windMph"));
-            return WeatherFeatures.of(tempF, humidityPct, windMph, drySpellDays);
+            double tempF = parseDoubleParam(params, "tempF");
+            double windMph = parseDoubleParam(params, "windMph");
+            return WeatherFeatures.of(tempF, humidityPct, windMph, drySpellDays, observationTime);
         }
     }
 
-    private static WeatherFeatures parseWeatherFeaturesFromJson(String json) {
+    public static WeatherFeatures parseWeatherFeaturesFromJson(String json) {
         if (json == null || json.trim().isEmpty()) {
             throw new IllegalArgumentException("Request body must not be empty");
         }
+        String trimmed = json.trim();
+        if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+            throw new IllegalArgumentException("Invalid JSON object: body must be enclosed in { }");
+        }
         Map<String, String> map = new HashMap<>();
-        String cleaned = json.replaceAll("[{}\"]", "");
-        for (String pair : cleaned.split(",")) {
-            String[] parts = pair.split(":");
-            if (parts.length == 2) {
-                map.put(parts[0].trim(), parts[1].trim());
+        String inner = trimmed.substring(1, trimmed.length() - 1);
+        for (String pair : inner.split(",")) {
+            int idx = pair.indexOf(':');
+            if (idx > 0) {
+                String key = pair.substring(0, idx).replaceAll("\"", "").trim();
+                String val = pair.substring(idx + 1).replaceAll("\"", "").trim();
+                if (!key.isEmpty()) {
+                    map.put(key, val);
+                }
             }
         }
         return parseWeatherFeaturesFromParams(map);
